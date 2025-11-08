@@ -4,9 +4,8 @@ Tiny AUR helper. Just lets you download and search for PKGBUILDS
 
 ## Usage
 
-Checks if requested PKGBUILD exists, and clones it to `rofi-git` directory
 ```
-$ pacget <name>
+$ pacget <name> 
 ```
 
 Need to clone more than one? 
