@@ -1,0 +1,99 @@
+#!/bin/env python3
+
+import argparse, sys, subprocess, requests, json
+
+BASE_URL = "https://aur.archlinux.org/"
+RPC_URL = "rpc/v5/"
+
+def search_multiple(pkgs: list[str]):
+    search_url = BASE_URL + RPC_URL + "info?arg[]="
+    search_url += pkgs[0]
+    pkgs.pop(0)
+
+    for pkg in pkgs:
+        search_url += f"&arg[]={pkg}"
+
+    response = requests.get(search_url)
+    response_json = json.loads(response.content)
+
+    for item in response_json["results"]:
+        print(item["Name"] + '\t' + item["Description"])
+
+def search_one(pkg_string: str):
+    search_url = BASE_URL + RPC_URL + "search/" + pkg_string + "?by=name" 
+    response = requests.get(search_url)
+
+    response_json = json.loads(response.content)
+
+    for item in response_json["results"]:
+        print(item["Name"])
+
+def search(pkgs: list[str]): 
+    if len(pkgs) == 1:
+        search_one(pkgs[0])
+    else:
+        search_multiple(pkgs)
+
+def pac_exists(url: str):
+    check_proc = subprocess.run(
+        ["git", "ls-remote", url, "--exit-code"], 
+        stdout=subprocess.PIPE
+    )
+
+    return len(check_proc.stdout) > 0
+
+def clone(pkgs: list[str], dests: list[str] | None, do_force=False):
+    if not do_force:
+        for i, pkg in enumerate(pkgs):
+            if pac_exists(BASE_URL + pkg + ".git"):
+                continue
+
+            print(f"Could not find remote for {pkg}. Skipping")
+
+            pkgs.pop(i)
+            if dests: dests.pop(i)
+
+    if not dests:
+        for pkg in pkgs:
+            subprocess.run([
+                "git", "clone", BASE_URL + pkg + ".git"
+            ])
+    else:
+        for pkg, dest in zip(pkgs, dests):
+            subprocess.run([
+                "git", "clone", BASE_URL + pkg + ".git", dest
+            ])
+
+def main(args: any):
+    try:
+        if args.search:
+            search(args.names)
+
+        elif args.names:
+            clone(args.names, args.dest, args.force)
+
+    except KeyboardInterrupt:
+        pass
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Search & Get PKGBUILD's from Arch User Repository"
+    )
+    
+    parser.add_argument("names",                               nargs='*', help="Names of PKGBUILD[s] to get/search for")
+    parser.add_argument("-s", "--search", action="store_true",            help="Search for name[s] of packages instead of installing")
+    parser.add_argument("-f", "--force",  action="store_true",            help="Do not check if PKGBUILD with given name exists, forcefully clone")
+    parser.add_argument("-d", "--dest",   metavar="DIR",       nargs='+', help="Optional directories where to clone PKGBUILD[s] to")
+
+    args = parser.parse_args()
+
+    if len(args.names) == 0:
+        parser.print_help()
+        sys.exit(1)
+
+    if args.dest and len(args.dest) != len(args.names):
+        print("Amount of directories doesn't match the amount of PKGBUILD[s] names")
+        sys.exit(1)
+
+    main(args)
