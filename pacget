@@ -1,11 +1,14 @@
 #!/bin/env python3
-
-import argparse, sys, subprocess, requests, json
+import argparse, sys, subprocess, requests, json, os
 
 BASE_URL = "https://aur.archlinux.org/"
 RPC_URL = "rpc/v5/"
 
 def print_pkg_info(pkg: object, is_detailed: bool, version: bool):
+    if os.environ.get("TERM") != "dumb":
+        pkg["Name"] = "\u001b[3m" + pkg["Name"] + "\033[0m" # Italic
+        pkg["Description"] = "\033[95m" + pkg["Description"] + "\033[0m" # Magenta
+ 
     if version:
         print(pkg["Name"] + ' ' + pkg["Version"])
     else:

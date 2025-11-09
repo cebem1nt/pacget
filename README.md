@@ -26,17 +26,20 @@ $ pacgtet -s zen qt5
 ## Misc
 ```
 pacget --help
-usage: pacget [-h] [-s] [-f] [-d DIR [DIR ...]] [names ...]
+usage: pacget [-h] [-d DIR [DIR ...]] [-i] [-f] [-s] [-v] [-D] [names ...]
 
 Search & Get PKGBUILD's from Arch User Repository
 
 positional arguments:
-  names                 Names of PKGBUILD[s] to get/search for
+  names                 Name[s] of PKGBUILD[s] to search for
 
 options:
   -h, --help            show this help message and exit
-  -s, --search          Search for name[s] of packages instead of installing
-  -f, --force           Do not check if PKGBUILD with given name exists, forcefully clone
   -d, --dest DIR [DIR ...]
-                        Optional directories where to clone PKGBUILD[s] to
+                        Optional directories where to clone to
+  -i, --install         After clonning, automatically install
+  -f, --force           Do not check if PKGBUILD[s] exist[s], forcefully clone
+  -s, --search          Search for PKGBUILD[s] instead of cloning
+  -v, --version         If searching, also print version
+  -D, --detailed        If searching, print more detailed information (Description, souce URL)
 ```
