@@ -6,7 +6,6 @@ RPC_URL = "rpc/v5/"
 
 def print_pkg_info(pkg: object, is_detailed: bool, version: bool):
     if os.environ.get("TERM") != "dumb":
-        pkg["Name"] = "\u001b[3m" + pkg["Name"] + "\033[0m" # Italic
         pkg["Description"] = "\033[95m" + pkg["Description"] + "\033[0m" # Magenta
  
     if version:
@@ -56,15 +55,25 @@ def pac_exists(url: str):
 
     return len(check_proc.stdout) == 0
 
-def clone_pkgbuild(cli: list[str]):
-    proc = subprocess.run(cli)
+def clone_pkgbuild(pkg: str, dest=None):
+    cli = ["git", "clone", BASE_URL + pkg + ".git"]
+    if dest:
+        dest = os.path.expanduser(dest)
+        cli.append(dest)
 
+    proc = subprocess.run(cli)
     if proc.returncode != 0:
         print("Could not clone PKGBUILD")
         sys.exit(1)
 
 
-def clone(pkgs: list[str], dests: list[str], do_force: bool, do_install: bool):
+def clone(
+    pkgs: list[str], 
+    dests: list[str], 
+    do_force: bool, 
+    do_install: bool, 
+    default_dir=None
+):
     if not do_force:
         for i, pkg in enumerate(pkgs):
             if pac_exists(BASE_URL + pkg + ".git"):
@@ -77,13 +86,12 @@ def clone(pkgs: list[str], dests: list[str], do_force: bool, do_install: bool):
 
     if not dests:
         for pkg in pkgs:
-            cli = ["git", "clone", BASE_URL + pkg + ".git"]
-            clone_pkgbuild(cli)
-            dests.append(pkg)
+            dest = os.path.join(default_dir, pkg) if default_dir else pkg
+            clone_pkgbuild(pkg, dest)
+            dests.append(dest)
     else:
         for pkg, dest in zip(pkgs, dests):
-            cli = ["git", "clone", BASE_URL + pkg + ".git", dest]
-            clone_pkgbuild(cli)
+            clone_pkgbuild(pkg, dest)
     
     if do_install:
         for pkg_dir in dests:
@@ -99,7 +107,8 @@ def main(args: any):
             clone(args.names, 
                   [] if not args.dest else args.dest, 
                   args.force, 
-                  args.install)
+                  args.install,
+                  args.storage_dir)
 
     except KeyboardInterrupt:
         pass
@@ -110,13 +119,14 @@ if __name__ == "__main__":
         description="Search & Get PKGBUILD's from Arch User Repository"
     )
     
-    parser.add_argument("names",                                 nargs='*', help="Name[s] of PKGBUILD[s] to search for")
-    parser.add_argument("-d", "--dest",     metavar="DIR",       nargs='+', help="Optional directories where to clone to")
-    parser.add_argument("-i", "--install",  action="store_true",            help="After clonning, automatically install")
-    parser.add_argument("-f", "--force",    action="store_true",            help="Do not check if PKGBUILD[s] exist[s], forcefully clone")
-    parser.add_argument("-s", "--search",   action="store_true",            help="Search for PKGBUILD[s] instead of cloning")
-    parser.add_argument("-v", "--version",  action="store_true",            help="If searching, also print version")
-    parser.add_argument("-D", "--detailed", action="store_true",            help="If searching, print more detailed information (Description, souce URL)")
+    parser.add_argument("names",                                    nargs='*', help="Name[s] of PKGBUILD[s] to search for")
+    parser.add_argument("-d", "--dest",        metavar="DIR",       nargs='+', help="Optional directories where to clone to")
+    parser.add_argument("-S", "--storage-dir", metavar="DIR",                  help="Default directory where to clone to by default")    
+    parser.add_argument("-i", "--install",     action="store_true",            help="After clonning, automatically install")
+    parser.add_argument("-f", "--force",       action="store_true",            help="Do not check if PKGBUILD[s] exist[s], forcefully clone")
+    parser.add_argument("-s", "--search",      action="store_true",            help="Search for PKGBUILD[s] instead of cloning")
+    parser.add_argument("-v", "--version",     action="store_true",            help="If searching, also print version")
+    parser.add_argument("-D", "--detailed",    action="store_true",            help="If searching, print more detailed information (Description, souce URL)")
 
     args = parser.parse_args()
 
