@@ -95,7 +95,7 @@ def clone(
     
     if do_install:
         for pkg_dir in dests:
-            subprocess.run(["makepkg", "-si", "-D", pkg_dir])
+            subprocess.run(["makepkg", "-si", "-D", os.path.expanduser(pkg_dir)])
 
 
 def main(args: any):
