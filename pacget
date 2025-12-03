@@ -56,16 +56,25 @@ def pac_exists(url: str):
     return len(check_proc.stdout) == 0
 
 def clone_pkgbuild(pkg: str, dest=None):
-    cli = ["git", "clone", BASE_URL + pkg + ".git"]
+    pkg_clone_url = BASE_URL + pkg + ".git"
+    cli = ["git", "clone", pkg_clone_url]
+
     if dest:
         dest = os.path.expanduser(dest)
         cli.append(dest)
 
+    if os.path.exists(dest):
+        if os.path.exists(os.path.join(dest, ".git")):
+            cli = ["git", "-C", dest, "pull"]
+        else:
+            print(f"Could not clone \"{pkg}\": {dest} exists, but appears to have other thing")
+            sys.exit(1)
+
     proc = subprocess.run(cli)
+
     if proc.returncode != 0:
         print("Could not clone PKGBUILD")
         sys.exit(1)
-
 
 def clone(
     pkgs: list[str], 
