@@ -1,146 +1,151 @@
 #!/bin/env python3
 import argparse, sys, subprocess, requests, json, os
 
+from typing import Optional, Iterable, Any, Union
+from itertools import zip_longest
+
 BASE_URL = "https://aur.archlinux.org/"
 RPC_URL = "rpc/v5/"
 
-def print_pkg_info(pkg: object, is_detailed: bool, version: bool):
-    if os.environ.get("TERM") != "dumb":
-        pkg["Description"] = "\033[95m" + pkg["Description"] + "\033[0m" # Magenta
- 
-    if version:
-        print(pkg["Name"] + ' ' + pkg["Version"])
-    else:
-        print(pkg["Name"])
+def err(msg: str):
+    sys.stderr.write(msg + '\n')
+    sys.exit(1)
 
-    if is_detailed:
-        print("   Info: ", pkg["Description"])
-        print(" Source: ", pkg["URL"])
-        print('')
+def rpc(*params: Iterable[Any]) -> Any:
+    final = BASE_URL + RPC_URL
 
-def search_multiple(pkgs: list[str], is_detailed: bool, version: bool):
-    search_url = BASE_URL + RPC_URL + "info?arg[]="
-    search_url += pkgs[0]
-    pkgs.pop(0)
+    for par in params:
+        final += '/' + str(par)
 
-    for pkg in pkgs:
-        search_url += f"&arg[]={pkg}"
+    resp = requests.get(final, timeout=10)
+    return resp.json()
 
-    response = requests.get(search_url)
-    response_json = json.loads(response.content)
+class Package:
+    def __init__(
+        self, 
+        name: str, 
+        dest: Optional[str]
+    ):
+        self.name = name
+        self.dest = dest
+        self.deps: list[Package] = []
 
-    for item in response_json["results"]:
-        print_pkg_info(item, is_detailed, version)
+    def __clone(self, cli: list[str]):
+        proc = subprocess.run(cli)
 
-def search_one(pkg_string: str, is_detailed: bool, version: bool):
-    search_url = BASE_URL + RPC_URL + "search/" + pkg_string + "?by=name" 
-    response = requests.get(search_url)
+        if proc.returncode != 0:
+            err("Could not clone PKGBUILD")
 
-    response_json = json.loads(response.content)
+    def clone(
+        self, 
+        do_force: bool = False,
+        do_install: bool = False,
+        pull_deps: bool = False,
+    ):
+        url = BASE_URL + self.name + ".git"
+        cli = ["git", "clone", url]
 
-    for item in response_json["results"]:
-        print_pkg_info(item, is_detailed, version)
+        found: dict = self.lookup()
+        
+        if not found and not do_force:
+            err(f"Package {self.name} was not found")
 
-def search(pkgs: list[str], is_detailed: bool, version: bool): 
-    if len(pkgs) == 1:
-        search_one(pkgs[0], is_detailed, version)
-    else:
-        search_multiple(pkgs, is_detailed, version)
+        if self.dest:
+            cli.append(self.dest)
 
-def pac_exists(url: str):
-    check_proc = subprocess.run(
-        ["git", "ls-remote", url, "--exit-code"], 
-        stdout=subprocess.PIPE
-    )
-
-    return len(check_proc.stdout) == 0
-
-def clone_pkgbuild(pkg: str, dest=None):
-    pkg_clone_url = BASE_URL + pkg + ".git"
-    cli = ["git", "clone", pkg_clone_url]
-
-    if dest:
-        dest = os.path.expanduser(dest)
-        cli.append(dest)
-
-    if os.path.exists(dest):
-        if os.path.exists(os.path.join(dest, ".git")):
-            cli = ["git", "-C", dest, "pull"]
+            if os.path.exists(os.path.join(self.dest, ".git")):
+                cli = ["git", "-C", self.dest, "pull"]
         else:
-            print(f"Could not clone \"{pkg}\": {dest} exists, but appears to have other thing")
-            sys.exit(1)
+            # When clonning with no specific destination, it will be cloned to
+            # cwd/pkg.name
+            self.dest = self.name
 
-    proc = subprocess.run(cli)
+        self.__clone(cli)
+                
+        if pull_deps or do_install:
+            # This block is unreachable from dependency
+            self.pull_deps(found)
+            if do_install: self.install()
 
-    if proc.returncode != 0:
-        print("Could not clone PKGBUILD")
-        sys.exit(1)
+    def pull_deps(self, info: Optional[dict]):
+        if not info:
+            err("Could not pull dependencies, No info")
 
-def clone(
-    pkgs: list[str], 
-    dests: list[str], 
-    do_force: bool, 
-    do_install: bool, 
-    default_dir=None
-):
-    if not do_force:
-        for i, pkg in enumerate(pkgs):
-            if pac_exists(BASE_URL + pkg + ".git"):
-                continue
+        deps: list[str] = info["results"][0]["Depends"]
+        make_deps: list[str] = info["results"][0]["MakeDepends"]
 
-            print(f"Could not find remote for {pkg}. Skipping")
+        querry = subprocess.run(
+            ["pacman", "-Sp"] + deps,
+            capture_output=True,
+            text=True
+        )
 
-            pkgs.pop(i)
-            if dests: dests.pop(i)
+        for line in querry.stderr.splitlines():
+            _, name = line.split("error: target not found: ")
 
-    if not dests:
-        for pkg in pkgs:
-            dest = os.path.join(default_dir, pkg) if default_dir else pkg
-            clone_pkgbuild(pkg, dest)
-            dests.append(dest)
-    else:
-        for pkg, dest in zip(pkgs, dests):
-            clone_pkgbuild(pkg, dest)
+            self.deps.append(
+                Package(name, self.dest + f"/deps/{name}" if self.dest else None)
+            )
+
+        for pkg in self.deps:
+            pkg.clone()
+
+        # print(make_deps)
+
+    def lookup(self) -> Optional[Any]:
+        response = rpc("info", self.name)
+        amount_found = response.get("resultcount")
+
+        if amount_found != 0:
+            return response
+
+        return None
+
+    def install(self):
+
+        for dep in self.deps:
+            cli = ["makepkg", "-si", "-D", dep.dest]
+            subprocess.run(cli)
+
+        subprocess.run(["makepkg", "-si", "-D", self.dest])
+
+
+def main(args: argparse.Namespace):
+    pkgs = []
+
+    for name, dest in zip_longest(args.names, args.dest):
+        if not dest and args.storage_dir:
+            dest = args.storage_dir + '/' + name
+
+        pkg = Package(name, dest)
+        pkgs.append(pkg)
     
-    if do_install:
-        for pkg_dir in dests:
-            subprocess.run(["makepkg", "-si", "-D", os.path.expanduser(pkg_dir)])
+    for pkg in pkgs:
+        ret = pkg.clone(args.force, args.install, args.pull_deps)
 
-
-def main(args: any):
-    try:
-        if args.search:
-            search(args.names, args.detailed, args.version)
-
-        elif args.names:
-            clone(args.names, 
-                  [] if not args.dest else args.dest, 
-                  args.force, 
-                  args.install,
-                  args.storage_dir)
-
-    except KeyboardInterrupt:
-        pass
+        if ret != 0: 
+            sys.exit(ret)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
+    p = argparse.ArgumentParser(
         description="Search & Get PKGBUILD's from Arch User Repository"
     )
     
-    parser.add_argument("names",                                    nargs='*', help="Name[s] of PKGBUILD[s] to search for")
-    parser.add_argument("-d", "--dest",        metavar="DIR",       nargs='+', help="Optional directories where to clone to")
-    parser.add_argument("-S", "--storage-dir", metavar="DIR",                  help="Default directory where to clone to by default")    
-    parser.add_argument("-i", "--install",     action="store_true",            help="After clonning, automatically install")
-    parser.add_argument("-f", "--force",       action="store_true",            help="Do not check if PKGBUILD[s] exist[s], forcefully clone")
-    parser.add_argument("-s", "--search",      action="store_true",            help="Search for PKGBUILD[s] instead of cloning")
-    parser.add_argument("-v", "--version",     action="store_true",            help="If searching, also print version")
-    parser.add_argument("-D", "--detailed",    action="store_true",            help="If searching, print more detailed information (Description, souce URL)")
+    p.add_argument("names",                                    nargs='*', help="Name[s] of PKGBUILD[s] to search for")
+    p.add_argument("-d", "--dest",  metavar="DIR", default=[], nargs='+', help="Optional directories where to clone to")
+    p.add_argument("-S", "--storage-dir", metavar="DIR",                  help="Default directory where to clone to")    
+    p.add_argument("-i", "--install",     action="store_true",            help="After clonning, automatically install")
+    p.add_argument("-f", "--force",       action="store_true",            help="Do not check if PKGBUILD[s] exist[s], forcefully clone")
+    p.add_argument("-s", "--search",      action="store_true",            help="Search for PKGBUILD[s] instead of cloning")
+    p.add_argument("-v", "--version",     action="store_true",            help="If searching, also print version")
+    p.add_argument("-p", "--pull-deps",   action="store_true",            help="Pull dependency PKGBUILD[s] as well")
+    p.add_argument("-D", "--detailed",    action="store_true",            help="If searching, print more detailed information (Description, souce URL)")
 
-    args = parser.parse_args()
+    args = p.parse_args()
 
     if len(args.names) == 0:
-        parser.print_help()
+        p.print_help()
         sys.exit(1)
 
     if args.dest and len(args.dest) != len(args.names):
