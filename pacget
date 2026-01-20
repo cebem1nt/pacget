@@ -11,7 +11,16 @@ def err(msg: str):
     sys.stderr.write(msg + '\n')
     sys.exit(1)
 
-def rpc(*params: Iterable[Any]) -> Any:
+def run(cli: list[str], capture_output=False):
+    proc = subprocess.run(
+        cli, text=True, capture_output=capture_output
+    )
+
+    return proc.stderr
+
+def rpc(
+    *params: Iterable[Any]
+) -> Any:
     final = BASE_URL + RPC_URL
 
     for par in params:
@@ -29,6 +38,7 @@ class Package:
         self.name = name
         self.dest = dest
         self.deps: list[Package] = []
+        self.make_deps: list[Package] = []
 
     def __clone(self, cli: list[str]):
         proc = subprocess.run(cli)
@@ -67,30 +77,39 @@ class Package:
             self.pull_deps(found)
             if do_install: self.install()
 
+    def __populate_deps(
+        self, 
+        deps: list[str],
+        is_make_deps: bool = False
+    ):
+        output = run(["pacman", "-Sp"] + deps, True)
+
+        out = []
+        sub_dir = "/make_deps/" if is_make_deps else "/deps/"
+
+        for line in output.splitlines():
+            _, name = line.split("error: target not found: ")
+            out.append(
+                Package(name, self.dest + f"{sub_dir}{name}" if self.dest else None)
+            )
+
+        return out
+
     def pull_deps(self, info: Optional[dict]):
         if not info:
             err("Could not pull dependencies, No info")
 
-        deps: list[str] = info["results"][0]["Depends"]
-        make_deps: list[str] = info["results"][0]["MakeDepends"]
+        deps = info["results"][0]["Depends"]
+        make_deps = info["results"][0]["MakeDepends"]
 
-        querry = subprocess.run(
-            ["pacman", "-Sp"] + deps,
-            capture_output=True,
-            text=True
-        )
+        self.deps = self.__populate_deps(deps)
+        self.make_deps = self.__populate_deps(make_deps, is_make_deps=True)
 
-        for line in querry.stderr.splitlines():
-            _, name = line.split("error: target not found: ")
-
-            self.deps.append(
-                Package(name, self.dest + f"/deps/{name}" if self.dest else None)
-            )
+        for pkg in self.make_deps:
+            pkg.clone()
 
         for pkg in self.deps:
             pkg.clone()
-
-        # print(make_deps)
 
     def lookup(self) -> Optional[Any]:
         response = rpc("info", self.name)
@@ -101,13 +120,37 @@ class Package:
 
         return None
 
+    def uninstall(self):
+        run(["sudo", "pacman", "-Rns", self.name])
+
     def install(self):
+        installed = []
 
-        for dep in self.deps:
-            cli = ["makepkg", "-si", "-D", dep.dest]
-            subprocess.run(cli)
+        for dep in self.make_deps + self.deps:
+            # Install dependencies
+            proc = subprocess.run(["makepkg", "-si", "-D", dep.dest])
+            if proc.returncode != 0:
+                break
 
-        subprocess.run(["makepkg", "-si", "-D", self.dest])
+            installed.append(dep)
+        else:
+            run(["makepkg", "-si", "-D", self.dest])
+
+            if self.make_deps:
+                run(
+                    ["sudo", "pacman", "-Rns"] + 
+                    [d.name for d in self.make_deps]
+                )
+
+            return
+
+        # Failure. Some package was not installed.
+        sys.stderr.write("Could not install package. Cleanup\n")
+
+        run(
+            ["sudo", "pacman", "-Rns"] + 
+            [i.name for i in installed]
+        )
 
 
 def main(args: argparse.Namespace):
@@ -134,13 +177,12 @@ if __name__ == "__main__":
     
     p.add_argument("names",                                    nargs='*', help="Name[s] of PKGBUILD[s] to search for")
     p.add_argument("-d", "--dest",  metavar="DIR", default=[], nargs='+', help="Optional directories where to clone to")
-    p.add_argument("-S", "--storage-dir", metavar="DIR",                  help="Default directory where to clone to")    
     p.add_argument("-i", "--install",     action="store_true",            help="After clonning, automatically install")
-    p.add_argument("-f", "--force",       action="store_true",            help="Do not check if PKGBUILD[s] exist[s], forcefully clone")
     p.add_argument("-s", "--search",      action="store_true",            help="Search for PKGBUILD[s] instead of cloning")
-    p.add_argument("-v", "--version",     action="store_true",            help="If searching, also print version")
+    p.add_argument("-f", "--force",       action="store_true",            help="Do not check if PKGBUILD[s] exist[s], forcefully clone")
     p.add_argument("-p", "--pull-deps",   action="store_true",            help="Pull dependency PKGBUILD[s] as well")
-    p.add_argument("-D", "--detailed",    action="store_true",            help="If searching, print more detailed information (Description, souce URL)")
+    p.add_argument("--verbose",           action="store_true",            help="If searching, print more detailed information (Description, souce URL)")
+    p.add_argument("--storage-dir",       metavar="DIR",                  help="Default directory where to clone to")    
 
     args = p.parse_args()
 
