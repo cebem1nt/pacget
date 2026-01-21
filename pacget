@@ -152,22 +152,55 @@ class Package:
             [i.name for i in installed]
         )
 
+def print_results(results: list[dict], is_brief: bool):
+    for res in results:
+        name = res["Name"]
+
+        if is_brief:
+            print(name)
+
+        else:
+            version = res["Version"]
+            desc = res["Description"]
+            
+            print(f"\n- \x1b[34m{name}\x1b[0m {version}")
+            print(f"  {desc}")
+
+def search(pkgs: list[str], is_brief: bool, by="name"):
+    for pkg in pkgs:
+        out = rpc("search", f"{pkg}?by={by}")
+
+        if not is_brief:
+            print(f"\n--------- Results for {pkg} ---------")
+
+        print_results(
+            out["results"],
+            is_brief
+        )
 
 def main(args: argparse.Namespace):
-    pkgs = []
+    try:
+        if args.search:
+            search(args.names, args.brief)
+            return
 
-    for name, dest in zip_longest(args.names, args.dest):
-        if not dest and args.storage_dir:
-            dest = args.storage_dir + '/' + name
+        pkgs = []
 
-        pkg = Package(name, dest)
-        pkgs.append(pkg)
-    
-    for pkg in pkgs:
-        ret = pkg.clone(args.force, args.install, args.pull_deps)
+        for name, dest in zip_longest(args.names, args.dest):
+            if not dest and args.storage_dir:
+                dest = args.storage_dir + '/' + name
 
-        if ret != 0: 
-            sys.exit(ret)
+            pkg = Package(name, dest)
+            pkgs.append(pkg)
+        
+        for pkg in pkgs:
+            ret = pkg.clone(args.force, args.install, args.pull_deps)
+
+            if ret != 0: 
+                sys.exit(ret)
+                
+    except (KeyboardInterrupt, EOFError) as e:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
@@ -176,12 +209,12 @@ if __name__ == "__main__":
     )
     
     p.add_argument("names",                                    nargs='*', help="Name[s] of PKGBUILD[s] to search for")
-    p.add_argument("-d", "--dest",  metavar="DIR", default=[], nargs='+', help="Optional directories where to clone to")
     p.add_argument("-i", "--install",     action="store_true",            help="After clonning, automatically install")
     p.add_argument("-s", "--search",      action="store_true",            help="Search for PKGBUILD[s] instead of cloning")
     p.add_argument("-f", "--force",       action="store_true",            help="Do not check if PKGBUILD[s] exist[s], forcefully clone")
+    p.add_argument("-d", "--dest",  metavar="DIR", default=[], nargs='+', help="Optional directories where to clone to")
     p.add_argument("-p", "--pull-deps",   action="store_true",            help="Pull dependency PKGBUILD[s] as well")
-    p.add_argument("--verbose",           action="store_true",            help="If searching, print more detailed information (Description, souce URL)")
+    p.add_argument("-b", "--brief",       action="store_true",            help="If searching, do not output additional info (description, version)")    
     p.add_argument("--storage-dir",       metavar="DIR",                  help="Default directory where to clone to")    
 
     args = p.parse_args()
