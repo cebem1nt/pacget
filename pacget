@@ -100,13 +100,14 @@ class Package:
             err("Could not pull dependencies, No info")
 
         deps = info["results"][0]["Depends"]
-        make_deps = info["results"][0]["MakeDepends"]
-
         self.deps = self.__populate_deps(deps)
-        self.make_deps = self.__populate_deps(make_deps, is_make_deps=True)
 
-        for pkg in self.make_deps:
-            pkg.clone()
+        if "MakeDepends" in info["results"][0]:
+            make_deps = info["results"][0]["MakeDepends"]
+            self.make_deps = self.__populate_deps(make_deps, is_make_deps=True)
+
+            for pkg in self.make_deps:
+                pkg.clone()
 
         for pkg in self.deps:
             pkg.clone()
