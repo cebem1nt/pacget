@@ -166,12 +166,15 @@ def print_results(results: list[dict], is_brief: bool):
             
             print(f"\n- \x1b[34m{name}\x1b[0m {version}")
             print(f"  {desc}")
+    print()
 
 def search(pkgs: list[str], is_brief: bool, by="name"):
+    total = len(pkgs)
+
     for pkg in pkgs:
         out = rpc("search", f"{pkg}?by={by}")
 
-        if not is_brief:
+        if not is_brief and total > 1:
             print(f"\n--------- Results for {pkg} ---------")
 
         print_results(
