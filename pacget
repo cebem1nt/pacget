@@ -66,15 +66,15 @@ class Package:
             if os.path.exists(os.path.join(self.dest, ".git")):
                 cli = ["git", "-C", self.dest, "pull"]
         else:
-            # When clonning with no specific destination, it will be cloned to
-            # cwd/pkg.name
+            # When clonning without destination, 
+            # clone to cwd/pkg.name
             self.dest = self.name
 
         self.__clone(cli)
                 
         if pull_deps or do_install:
             # This block is unreachable from dependency
-            self.pull_deps(found)
+            self.pull_deps(found["results"][0])
             if do_install: self.install()
 
     def __populate_deps(
@@ -99,11 +99,10 @@ class Package:
         if not info:
             err("Could not pull dependencies, No info")
 
-        deps = info["results"][0]["Depends"]
-        self.deps = self.__populate_deps(deps)
+        if deps := info.get("Depends"):
+            self.deps = self.__populate_deps(deps)
 
-        if "MakeDepends" in info["results"][0]:
-            make_deps = info["results"][0]["MakeDepends"]
+        if make_deps := info.get("MakeDepends"):
             self.make_deps = self.__populate_deps(make_deps, is_make_deps=True)
 
             for pkg in self.make_deps:
