@@ -25,8 +25,8 @@ $ pacgtet -s zen qt5
 
 ## Misc
 ```
-pacget --help
-usage: pacget [-h] [-d DIR [DIR ...]] [-S DIR] [-i] [-f] [-s] [-v] [-D] [names ...]
+usage: pacget [-h] [-d DIR [DIR ...]] [-s] [-sb [{name,name-desc,maintainer,depends,makedepends,optdepends,checkdepends}]] [-i] [-f] [-p] [-b] [--safe-mode] [--storage-dir DIR]
+              [names ...]
 
 Search & Get PKGBUILD's from Arch User Repository
 
@@ -37,11 +37,13 @@ options:
   -h, --help            show this help message and exit
   -d, --dest DIR [DIR ...]
                         Optional directories where to clone to
-  -S, --storage-dir DIR
-                        Default directory where to clone to by default
+  -s, --search          Search for PKGBUILD[s] instead of cloning.
+  -sb, --search-by [{name,name-desc,maintainer,depends,makedepends,optdepends,checkdepends}]
+                        Search for PKGBUILD[s], takes search by param
   -i, --install         After clonning, automatically install
   -f, --force           Do not check if PKGBUILD[s] exist[s], forcefully clone
-  -s, --search          Search for PKGBUILD[s] instead of cloning
-  -v, --version         If searching, also print version
-  -D, --detailed        If searching, print more detailed information (Description, souce URL)
+  -p, --pull-deps       Pull dependency PKGBUILD[s] as well
+  -b, --brief           If searching, do not output additional info (description, version)
+  --safe-mode           if -i is provided, print the content of PKGBUILD and prompt for continuation
+  --storage-dir DIR     Default directory where to clone to
 ```
