@@ -9,20 +9,11 @@ RPC_URL = "rpc/v5/"
 
 SEARCH_BY_OPTS = ("name", "name-desc", "maintainer", "depends", "makedepends", "optdepends", "checkdepends")
 
-def err(msg: str):
-    sys.stderr.write(msg + '\n')
-    sys.exit(1)
-
 def run(cli: list[str], capture_output=False):
-    proc = subprocess.run(
-        cli, text=True, capture_output=capture_output
-    )
-
+    proc = subprocess.run(cli, text=True, capture_output=capture_output)
     return proc.stderr
 
-def rpc(
-    *params: Iterable[Any]
-) -> Any:
+def rpc(*params: Iterable[Any]) -> Any:
     final = BASE_URL + RPC_URL
 
     for par in params:
@@ -46,7 +37,8 @@ class Package:
         proc = subprocess.run(cli)
 
         if proc.returncode != 0:
-            err("Could not clone PKGBUILD")
+            print("Could not clone PKGBUILD", file=sys.stderr)
+            exit(1)
 
     def clone(
         self, 
@@ -61,7 +53,8 @@ class Package:
         found: dict = self.lookup()
         
         if not found and not do_force:
-            err(f"Package {self.name} was not found")
+            print(f"Package {self.name} was not found", file=sys.stderr)
+            exit(1)
 
         if self.dest:
             cli.append(self.dest)
@@ -78,7 +71,7 @@ class Package:
         if pull_deps or do_install:
             # This block is unreachable from dependency
             self.pull_deps(found["results"][0])
-            if do_install: self.install()
+            if do_install: self.install(prompt_confirm)
 
     def __populate_deps(
         self, 
@@ -100,7 +93,8 @@ class Package:
 
     def pull_deps(self, info: Optional[dict]):
         if not info:
-            err("Could not pull dependencies, No info")
+            print("Could not pull dependencies, No info", file=sys.stderr)
+            exit(1)
 
         if deps := info.get("Depends"):
             self.deps = self.__populate_deps(deps)
@@ -131,7 +125,7 @@ class Package:
 
         for dep in self.make_deps + self.deps:
             # Install dependencies
-            if not confirm(dep.dest + "/PKGBUILD"):
+            if prompt_confirm and not confirm(dep.dest + "/PKGBUILD"):
                 break
 
             proc = subprocess.run(["makepkg", "-si", "-D", dep.dest])
@@ -140,7 +134,7 @@ class Package:
 
             installed.append(dep)
         else:
-            if not confirm(self.dest + "/PKGBUILD"):
+            if prompt_confirm and not confirm(self.dest + "/PKGBUILD"):
                 return
             
             run(["makepkg", "-si", "-D", self.dest])
@@ -154,8 +148,9 @@ class Package:
             return
 
         # Failure. Some package was not installed.
-        sys.stderr.write("Could not install package. Cleanup\n")
+        print("Could not install package. Cleanup", file=sys.stderr)
         run(["sudo", "pacman", "-Rns"] + [i.name for i in installed])
+        exit(1)
 
 def confirm(path: str):
     with open(path, "r") as f:
@@ -215,13 +210,13 @@ def main(args: argparse.Namespace):
             pkgs.append(pkg)
         
         for pkg in pkgs:
-            ret = pkg.clone(args.force, args.install, args.pull_deps)
+            ret = pkg.clone(args.force, args.install, args.pull_deps, args.safe_mode)
 
             if ret != 0: 
-                sys.exit(ret)
+                exit(ret)
                 
     except (KeyboardInterrupt, EOFError) as e:
-        sys.exit(1)
+        exit(1)
 
 
 if __name__ == "__main__":
@@ -229,7 +224,7 @@ if __name__ == "__main__":
         description="Search & Get PKGBUILD's from Arch User Repository"
     )
     
-    p.add_argument("names",                                          nargs='*', help="Name[s] of PKGBUILD[s] to search for")
+    p.add_argument("names",                                          nargs='+', help="Name[s] of PKGBUILD[s] to search for")
     p.add_argument("-d",  "--dest",       metavar="DIR", default=[], nargs='+', help="Optional directories where to clone to")
     p.add_argument("-s",  "--search",     action="store_true",   help="Search for PKGBUILD[s] instead of cloning.")
     p.add_argument("-sb", "--search-by",  nargs='?', choices=SEARCH_BY_OPTS, help=f"Search for PKGBUILD[s], takes search by param")
@@ -242,12 +237,8 @@ if __name__ == "__main__":
 
     args = p.parse_args()
 
-    if len(args.names) == 0:
-        p.print_help()
-        sys.exit(1)
-
     if args.dest and len(args.dest) != len(args.names):
-        print("Amount of directories doesn't match the amount of PKGBUILD[s] names")
-        sys.exit(1)
+        print("Amount of directories doesn't match the amount of PKGBUILD[s] names", file=sys.stderr)
+        exit(1)
 
     main(args)
