@@ -7,6 +7,8 @@ from itertools import zip_longest
 BASE_URL = "https://aur.archlinux.org/"
 RPC_URL = "rpc/v5/"
 
+SEARCH_BY_OPTS = ("name", "name-desc", "maintainer", "depends", "makedepends", "optdepends", "checkdepends")
+
 def err(msg: str):
     sys.stderr.write(msg + '\n')
     sys.exit(1)
@@ -51,6 +53,7 @@ class Package:
         do_force: bool = False,
         do_install: bool = False,
         pull_deps: bool = False,
+        prompt_confirm: bool = False
     ):
         url = BASE_URL + self.name + ".git"
         cli = ["git", "clone", url]
@@ -123,17 +126,23 @@ class Package:
     def uninstall(self):
         run(["sudo", "pacman", "-Rns", self.name])
 
-    def install(self):
+    def install(self, prompt_confirm: bool = False):
         installed = []
 
         for dep in self.make_deps + self.deps:
             # Install dependencies
+            if not confirm(dep.dest + "/PKGBUILD"):
+                break
+
             proc = subprocess.run(["makepkg", "-si", "-D", dep.dest])
             if proc.returncode != 0:
                 break
 
             installed.append(dep)
         else:
+            if not confirm(self.dest + "/PKGBUILD"):
+                return
+            
             run(["makepkg", "-si", "-D", self.dest])
 
             if self.make_deps:
@@ -146,11 +155,19 @@ class Package:
 
         # Failure. Some package was not installed.
         sys.stderr.write("Could not install package. Cleanup\n")
+        run(["sudo", "pacman", "-Rns"] + [i.name for i in installed])
 
-        run(
-            ["sudo", "pacman", "-Rns"] + 
-            [i.name for i in installed]
-        )
+def confirm(path: str):
+    with open(path, "r") as f:
+        print()
+        print(f.read())
+        print()
+
+    do_continue = input("Continue? [Y/n] ").strip()
+    if do_continue == "n" or do_continue == "N" or do_continue == "no" or do_continue == "No":
+        return False
+    
+    return True
 
 def print_results(results: list[dict], is_brief: bool):
     for res in results:
@@ -184,8 +201,9 @@ def search(pkgs: list[str], is_brief: bool, by="name"):
 def main(args: argparse.Namespace):
     try:
         if args.search:
-            search(args.names, args.brief)
-            return
+            return search(args.names, args.brief)
+        elif args.search_by:
+            return search(args.names, args.brief, args.search_by)
 
         pkgs = []
 
@@ -211,14 +229,16 @@ if __name__ == "__main__":
         description="Search & Get PKGBUILD's from Arch User Repository"
     )
     
-    p.add_argument("names",                                    nargs='*', help="Name[s] of PKGBUILD[s] to search for")
-    p.add_argument("-i", "--install",     action="store_true",            help="After clonning, automatically install")
-    p.add_argument("-s", "--search",      action="store_true",            help="Search for PKGBUILD[s] instead of cloning")
-    p.add_argument("-f", "--force",       action="store_true",            help="Do not check if PKGBUILD[s] exist[s], forcefully clone")
-    p.add_argument("-d", "--dest",  metavar="DIR", default=[], nargs='+', help="Optional directories where to clone to")
-    p.add_argument("-p", "--pull-deps",   action="store_true",            help="Pull dependency PKGBUILD[s] as well")
-    p.add_argument("-b", "--brief",       action="store_true",            help="If searching, do not output additional info (description, version)")    
-    p.add_argument("--storage-dir",       metavar="DIR",                  help="Default directory where to clone to")    
+    p.add_argument("names",                                          nargs='*', help="Name[s] of PKGBUILD[s] to search for")
+    p.add_argument("-d",  "--dest",       metavar="DIR", default=[], nargs='+', help="Optional directories where to clone to")
+    p.add_argument("-s",  "--search",     action="store_true",   help="Search for PKGBUILD[s] instead of cloning.")
+    p.add_argument("-sb", "--search-by",  nargs='?', choices=SEARCH_BY_OPTS, help=f"Search for PKGBUILD[s], takes search by param")
+    p.add_argument("-i",  "--install",    action="store_true",   help="After clonning, automatically install")
+    p.add_argument("-f",  "--force",      action="store_true",   help="Do not check if PKGBUILD[s] exist[s], forcefully clone")
+    p.add_argument("-p",  "--pull-deps",  action="store_true",   help="Pull dependency PKGBUILD[s] as well")
+    p.add_argument("-b",  "--brief",      action="store_true",   help="If searching, do not output additional info (description, version)")    
+    p.add_argument("--safe-mode",         action="store_true",   help="if -i is provided, print the content of PKGBUILD and prompt for continuation")
+    p.add_argument("--storage-dir",       metavar="DIR",         help="Default directory where to clone to")
 
     args = p.parse_args()
 
