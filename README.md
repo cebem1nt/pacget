@@ -1,32 +1,53 @@
 # Pacget
 
-Tiny AUR helper. Just lets you download and search for PKGBUILDS
+Tiny af AUR helper. Lets you download, search for PKGBUILDS and more things. **Doesn't mix AUR packages and oficial arch packages**
 
 ## Usage
 
 ```
-$ pacget <name> 
+pacget <name>
 ```
 
 Need to clone more than one? 
 ```
-$ pacget <name 1> <name n>
+pacget <name 1> <name n>
 ```
 
-Want to clone to exact directory?
+Clone, and pull all the PKGBUILD dependencies?
 ```
-$ pacget <name 1> <name 2> --dest <dir 1> <dir 2> 
+pacget -p hyprland-git
+```
+
+Clone, install automatically, and pull dependencies?
+```
+pacget -pi hyprland-git
+```
+
+Install but check the PKGBUILD content for anything malicious before?
+```
+pacget --safe-mode -i browsh-bin
+```
+
+Clone to exact directory?
+```
+pacget <name 1> <name 2> --dest <dir 1> <dir 2> 
 ```
 
 Searching?
 ```
-$ pacgtet -s zen qt5  
+pacget -s zen qt5  
+```
+
+Clone PKGBUILDS to a specific directory by default?
+```
+pacget --storage-dir=~/.local/src/ waybar-git
 ```
 
 ## Misc
 ```
-usage: pacget [-h] [-d DIR [DIR ...]] [-s] [-sb [{name,name-desc,maintainer,depends,makedepends,optdepends,checkdepends}]] [-i] [-f] [-p] [-b] [--safe-mode] [--storage-dir DIR]
-              [names ...]
+usage: pacget [-h] [-d DIR [DIR ...]] [-s] [-b [{name,name-desc,maintainer,depends,makedepends,optdepends,checkdepends}]] [-i] [-f] [-p] [--brief] [--safe-mode]
+              [--storage-dir DIR]
+              names [names ...]
 
 Search & Get PKGBUILD's from Arch User Repository
 
@@ -38,12 +59,12 @@ options:
   -d, --dest DIR [DIR ...]
                         Optional directories where to clone to
   -s, --search          Search for PKGBUILD[s] instead of cloning.
-  -sb, --search-by [{name,name-desc,maintainer,depends,makedepends,optdepends,checkdepends}]
-                        Search for PKGBUILD[s], takes search by param
+  -b, --by [{name,name-desc,maintainer,depends,makedepends,optdepends,checkdepends}]
+                        An attribute to search by
   -i, --install         After clonning, automatically install
   -f, --force           Do not check if PKGBUILD[s] exist[s], forcefully clone
   -p, --pull-deps       Pull dependency PKGBUILD[s] as well
-  -b, --brief           If searching, do not output additional info (description, version)
+  --brief               If searching, do not output additional info (description, version)
   --safe-mode           if -i is provided, print the content of PKGBUILD and prompt for continuation
   --storage-dir DIR     Default directory where to clone to
 ```
