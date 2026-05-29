@@ -1,13 +1,11 @@
 #!/bin/env python3
-import argparse, sys, subprocess, requests, json, os
+import argparse, sys, subprocess, requests, json, os, re
 
 from typing import Optional, Iterable, Any, Union
 from itertools import zip_longest
 
 BASE_URL = "https://aur.archlinux.org/"
 RPC_URL = "rpc/v5/"
-
-SEARCH_BY_OPTS = ("name", "name-desc", "maintainer", "depends", "makedepends", "optdepends", "checkdepends")
 
 def run(cli: list[str], capture_output=False):
     proc = subprocess.run(cli, text=True, capture_output=capture_output)
@@ -19,21 +17,28 @@ def rpc(*params: Iterable[Any]) -> Any:
     for par in params:
         final += '/' + str(par)
 
-    resp = requests.get(final, timeout=10)
-    return resp.json()
+    return requests.get(final, timeout=10).json()
 
 class Package:
     def __init__(
         self, 
-        name: str, 
+        name: str,
         dest: Optional[str]
     ):
         self.name = name
         self.dest = dest
+        if not self.dest:
+            self.dest = name 
+
         self.deps: list[Package] = []
         self.make_deps: list[Package] = []
 
-    def __clone(self, cli: list[str]):
+    def __clone_or_pull(self, url: str):
+        cli = ["git", "clone", url, self.dest]
+        
+        if os.path.exists(os.path.join(self.dest, ".git")):
+            cli = ["git", "-C", self.dest, "pull"]
+
         proc = subprocess.run(cli)
 
         if proc.returncode != 0:
@@ -42,36 +47,24 @@ class Package:
 
     def clone(
         self, 
-        do_force: bool = False,
-        do_install: bool = False,
+        force: bool = False,
+        install: bool = False,
         pull_deps: bool = False,
-        prompt_confirm: bool = False
+        prompt: bool = False
     ):
-        url = BASE_URL + self.name + ".git"
-        cli = ["git", "clone", url]
-
-        found: dict = self.lookup()
+        self.info = self.lookup()
         
-        if not found and not do_force:
+        if not self.info and not force:
             print(f"Package {self.name} was not found", file=sys.stderr)
             exit(1)
 
-        if self.dest:
-            cli.append(self.dest)
+        self.__clone_or_pull(BASE_URL + self.name + ".git")
 
-            if os.path.exists(os.path.join(self.dest, ".git")):
-                cli = ["git", "-C", self.dest, "pull"]
-        else:
-            # When clonning without destination, 
-            # clone to cwd/pkg.name
-            self.dest = self.name
-
-        self.__clone(cli)
-                
-        if pull_deps or do_install:
-            # This block is unreachable from dependency
-            self.pull_deps(found["results"][0])
-            if do_install: self.install(prompt_confirm)
+        if pull_deps or install:
+            self.pull_deps()
+            
+        if install:
+            return self.install(prompt)
 
     def __populate_deps(
         self, 
@@ -79,135 +72,110 @@ class Package:
         is_make_deps: bool = False
     ):
         output = run(["pacman", "-Sp"] + deps, True)
+        sub_dir = "/make_deps/" if is_make_deps else \
+                  "/deps/"
 
-        out = []
-        sub_dir = "/make_deps/" if is_make_deps else "/deps/"
+        deps = []
 
         for line in output.splitlines():
             _, name = line.split("error: target not found: ")
-            out.append(
-                Package(name, self.dest + f"{sub_dir}{name}" if self.dest else None)
-            )
+            deps.append(Package(name, self.dest + f"{sub_dir}{name}"))
 
-        return out
+        if is_make_deps:
+            self.make_deps = deps
+        else:
+            self.deps = deps
 
-    def pull_deps(self, info: Optional[dict]):
-        if not info:
+    def pull_deps(self):
+        if not self.info:
             print("Could not pull dependencies, No info", file=sys.stderr)
             exit(1)
 
-        if deps := info.get("Depends"):
-            self.deps = self.__populate_deps(deps)
+        if deps := self.info.get("Depends"):
+            self.__populate_deps(deps)
 
-        if make_deps := info.get("MakeDepends"):
-            self.make_deps = self.__populate_deps(make_deps, is_make_deps=True)
+        if make_deps := self.info.get("MakeDepends"):
+            self.__populate_deps(make_deps, is_make_deps=True)
 
-            for pkg in self.make_deps:
-                pkg.clone()
-
-        for pkg in self.deps:
+        for pkg in self.make_deps + self.deps:
             pkg.clone()
 
-    def lookup(self) -> Optional[Any]:
+    def lookup(self) -> Optional[dict]:
         response = rpc("info", self.name)
         amount_found = response.get("resultcount")
 
         if amount_found != 0:
-            return response
+            return response.get("results")[0]
 
         return None
+    
+    def confirm(self) -> bool:
+        with open(os.path.join(self.dest, "PKGBUILD"), "r") as f:
+            print('\n' + f.read() + '\n')
 
-    def uninstall(self):
-        run(["sudo", "pacman", "-Rns", self.name])
+        do_continue = input("Continue? [Y/n] ").strip()
+        if re.match("(?:n|no|N|No)", do_continue):
+            return False
+        
+        return True
 
-    def install(self, prompt_confirm: bool = False):
+    def install(self, prompt: bool = False):
         installed = []
 
         for dep in self.make_deps + self.deps:
-            # Install dependencies
-            if prompt_confirm and not confirm(dep.dest + "/PKGBUILD"):
-                break
+            if prompt and not dep.confirm():
+                return cleanup(installed)
 
             proc = subprocess.run(["makepkg", "-si", "-D", dep.dest])
             if proc.returncode != 0:
-                break
+                return cleanup(installed)
 
             installed.append(dep)
-        else:
-            if prompt_confirm and not confirm(self.dest + "/PKGBUILD"):
-                return
-            
-            run(["makepkg", "-si", "-D", self.dest])
 
-            if self.make_deps:
-                run(
-                    ["sudo", "pacman", "-Rns"] + 
-                    [d.name for d in self.make_deps]
-                )
+        if prompt and not self.confirm():
+            return cleanup(installed) 
+        
+        run(["makepkg", "-si", "-D", self.dest])
 
-            return
+        if self.make_deps:
+            run(["sudo", "pacman", "-Rns"] + [d.name for d in self.make_deps])
 
-        # Failure. Some package was not installed.
-        print("Could not install package. Cleanup", file=sys.stderr)
-        run(["sudo", "pacman", "-Rns"] + [i.name for i in installed])
-        exit(1)
+def cleanup(installed: list[str]):
+    print("Could not install package. Cleanup", file=sys.stderr)
+    run(["sudo", "pacman", "-Rns"] + [i.name for i in installed])
+    return 1
 
-def confirm(path: str):
-    with open(path, "r") as f:
-        print()
-        print(f.read())
-        print()
+def search(
+    queries: list[str], 
+    is_brief: bool,
+    by="name"
+):
+    total = len(queries)
 
-    do_continue = input("Continue? [Y/n] ").strip()
-    if do_continue == "n" or do_continue == "N" or do_continue == "no" or do_continue == "No":
-        return False
-    
-    return True
-
-def print_results(results: list[dict], is_brief: bool):
-    for res in results:
-        name = res["Name"]
-
-        if is_brief:
-            print(name)
-
-        else:
-            version = res["Version"]
-            desc = res["Description"]
-            
-            print(f"\n- \x1b[34m{name}\x1b[0m {version}")
-            print(f"  {desc}")
-    print()
-
-def search(pkgs: list[str], is_brief: bool, by="name"):
-    total = len(pkgs)
-
-    for pkg in pkgs:
-        out = rpc("search", f"{pkg}?by={by}")
-
+    for query in queries:
+        found = rpc("search", f"{query}?by={by}").get("results")
         if not is_brief and total > 1:
-            print(f"\n--------- Results for {pkg} ---------")
+            print(f"\n--------- {query} ---------")
 
-        print_results(
-            out["results"],
-            is_brief
-        )
+        for res in found:
+            if is_brief:
+                print(res["Name"])
+            else:
+                print(f"- \x1b[34m{res["Name"]}\x1b[0m {res["Version"]}")
+                print(f"  {res["Description"]}\n")
 
 def main(args: argparse.Namespace):
     try:
         if args.search:
-            return search(args.names, args.brief)
-        elif args.search_by:
-            return search(args.names, args.brief, args.search_by)
+            return search(args.names, args.brief, args.by)
 
         pkgs = []
 
         for name, dest in zip_longest(args.names, args.dest):
             if not dest and args.storage_dir:
-                dest = args.storage_dir + '/' + name
+                dest = os.path.join(args.storage_dir, name)
 
-            pkg = Package(name, dest)
-            pkgs.append(pkg)
+            pkgs.append(Package(name, dest))
         
         for pkg in pkgs:
             ret = pkg.clone(args.force, args.install, args.pull_deps, args.safe_mode)
@@ -218,20 +186,21 @@ def main(args: argparse.Namespace):
     except (KeyboardInterrupt, EOFError) as e:
         exit(1)
 
-
 if __name__ == "__main__":
     p = argparse.ArgumentParser(
         description="Search & Get PKGBUILD's from Arch User Repository"
     )
-    
+
+    search_by_opts = ("name", "name-desc", "maintainer", "depends", "makedepends", "optdepends", "checkdepends")
+
     p.add_argument("names",                                          nargs='+', help="Name[s] of PKGBUILD[s] to search for")
     p.add_argument("-d",  "--dest",       metavar="DIR", default=[], nargs='+', help="Optional directories where to clone to")
-    p.add_argument("-s",  "--search",     action="store_true",   help="Search for PKGBUILD[s] instead of cloning.")
-    p.add_argument("-sb", "--search-by",  nargs='?', choices=SEARCH_BY_OPTS, help=f"Search for PKGBUILD[s], takes search by param")
+    p.add_argument("-s",  "--search",     action="store_true",       help="Search for PKGBUILD[s] instead of cloning.")
+    p.add_argument("-b",  "--by", nargs='?', choices=search_by_opts, default="name", help="An attribute to search by")
     p.add_argument("-i",  "--install",    action="store_true",   help="After clonning, automatically install")
     p.add_argument("-f",  "--force",      action="store_true",   help="Do not check if PKGBUILD[s] exist[s], forcefully clone")
     p.add_argument("-p",  "--pull-deps",  action="store_true",   help="Pull dependency PKGBUILD[s] as well")
-    p.add_argument("-b",  "--brief",      action="store_true",   help="If searching, do not output additional info (description, version)")    
+    p.add_argument("--brief",             action="store_true",   help="If searching, do not output additional info (description, version)")    
     p.add_argument("--safe-mode",         action="store_true",   help="if -i is provided, print the content of PKGBUILD and prompt for continuation")
     p.add_argument("--storage-dir",       metavar="DIR",         help="Default directory where to clone to")
 
