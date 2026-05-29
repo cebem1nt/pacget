@@ -1,6 +1,6 @@
 # Pacget
 
-Tiny af AUR helper. Lets you download, search for PKGBUILDS and more things in just 200 lines of code. **Doesn't mix AUR packages and oficial arch packages**
+Tiny AUR helper. Lets you download, search for PKGBUILDS and more things in just 200 lines of code. **Doesn't mix AUR packages and oficial arch packages**
 
 ## Usage
 
