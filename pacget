@@ -1,5 +1,5 @@
 #!/bin/env python3
-import argparse, sys, subprocess, requests, json, os, re
+import argparse, sys, subprocess, requests, json, os, re, readline
 
 from typing import Optional, Iterable, Any, Union
 from itertools import zip_longest
@@ -35,15 +35,19 @@ class Package:
 
     def __clone_or_pull(self, url: str):
         cli = ["git", "clone", url, self.dest]
-        
+        did_pull = False
+
         if os.path.exists(os.path.join(self.dest, ".git")):
             cli = ["git", "-C", self.dest, "pull"]
+            did_pull = True
 
         proc = subprocess.run(cli)
 
         if proc.returncode != 0:
             print("Could not clone PKGBUILD", file=sys.stderr)
             exit(1)
+
+        return did_pull
 
     def clone(
         self, 
@@ -58,13 +62,13 @@ class Package:
             print(f"Package {self.name} was not found", file=sys.stderr)
             exit(1)
 
-        self.__clone_or_pull(BASE_URL + self.name + ".git")
+        did_pull = self.__clone_or_pull(BASE_URL + self.name + ".git")
 
         if pull_deps or install:
             self.pull_deps()
             
         if install:
-            return self.install(prompt)
+            return self.install(prompt, did_pull)
 
     def __populate_deps(
         self, 
@@ -109,21 +113,24 @@ class Package:
 
         return None
     
-    def confirm(self) -> bool:
-        with open(os.path.join(self.dest, "PKGBUILD"), "r") as f:
-            print('\n' + f.read() + '\n')
+    def confirm(self, was_updated: bool = False) -> bool:
+        if was_updated:
+            subprocess.run(["git", "-C", self.dest, "diff", "HEAD~1"])
+        else:
+            subprocess.run(["less", os.path.join(self.dest, "PKGBUILD")])
 
         do_continue = input("Continue? [Y/n] ").strip()
+        
         if re.match("(?:n|no|N|No)", do_continue):
             return False
         
         return True
 
-    def install(self, prompt: bool = False):
+    def install(self, prompt: bool = False, firstly_installed: bool = False):
         installed = []
 
         for dep in self.make_deps + self.deps:
-            if prompt and not dep.confirm():
+            if prompt and not dep.confirm(firstly_installed):
                 return cleanup(installed)
 
             proc = subprocess.run(["makepkg", "-si", "-D", dep.dest])
@@ -132,7 +139,7 @@ class Package:
 
             installed.append(dep)
 
-        if prompt and not self.confirm():
+        if prompt and not self.confirm(firstly_installed):
             return cleanup(installed) 
         
         run(["makepkg", "-si", "-D", self.dest])
@@ -200,9 +207,9 @@ if __name__ == "__main__":
     p.add_argument("-i",  "--install",    action="store_true",   help="After clonning, automatically install")
     p.add_argument("-f",  "--force",      action="store_true",   help="Do not check if PKGBUILD[s] exist[s], forcefully clone")
     p.add_argument("-p",  "--pull-deps",  action="store_true",   help="Pull dependency PKGBUILD[s] as well")
-    p.add_argument("--brief",             action="store_true",   help="If searching, do not output additional info (description, version)")    
-    p.add_argument("--safe-mode",         action="store_true",   help="if -i is provided, print the content of PKGBUILD and prompt for continuation")
+    p.add_argument("-S",  "--safe-mode",  action="store_true",   help="if -i is provided, print the content of PKGBUILD and prompt for continuation")
     p.add_argument("--storage-dir",       metavar="DIR",         help="Default directory where to clone to")
+    p.add_argument("--brief",             action="store_true",   help="If searching, do not output additional info (description, version)")    
 
     args = p.parse_args()
 
